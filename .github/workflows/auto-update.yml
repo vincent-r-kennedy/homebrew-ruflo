@@ -1,0 +1,53 @@
+name: Auto-update formula
+
+on:
+  schedule:
+    - cron: "0 0 * * *" # daily at midnight UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check-and-update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check for new version
+        id: check
+        run: |
+          CURRENT=$(grep -oP 'url "https://registry.npmjs.org/ruflo/-/ruflo-\K[^"]+(?=\.tgz")' Formula/ruflo.rb)
+          LATEST=$(curl -s https://registry.npmjs.org/ruflo/latest | jq -r .version)
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          if [ "$CURRENT" != "$LATEST" ]; then
+            echo "needs_update=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update formula
+        if: steps.check.outputs.needs_update == 'true'
+        env:
+          VERSION: ${{ steps.check.outputs.latest }}
+        run: |
+          URL="https://registry.npmjs.org/ruflo/-/ruflo-${VERSION}.tgz"
+          SHA256=$(curl -sL "$URL" | sha256sum | awk '{print $1}')
+
+          # Detect minimum Node.js major version from ruflo's engines field
+          NODE_REQ=$(curl -s "https://registry.npmjs.org/ruflo/${VERSION}" | jq -r '.engines.node // ">= 20.0.0"')
+          NODE_MAJOR=$(echo "$NODE_REQ" | grep -oE '[0-9]+' | head -1)
+
+          sed -i "s|url \"https://registry.npmjs.org/ruflo/-/ruflo-.*\.tgz\"|url \"${URL}\"|" Formula/ruflo.rb
+          sed -i "s|sha256 \".*\"|sha256 \"${SHA256}\"|" Formula/ruflo.rb
+          sed -i "s|depends_on \"node@.*\"|depends_on \"node@${NODE_MAJOR}\"|" Formula/ruflo.rb
+
+      - name: Commit and push
+        if: steps.check.outputs.needs_update == 'true'
+        env:
+          VERSION: ${{ steps.check.outputs.latest }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/ruflo.rb
+          git commit -m "Update ruflo to ${VERSION}"
+          git push

@@ -1,0 +1,42 @@
+name: Test formula
+
+on:
+  pull_request:
+    paths:
+      - "Formula/**"
+  push:
+    branches: [main]
+    paths:
+      - "Formula/**"
+      - ".github/workflows/test.yml"
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up tap
+        run: |
+          mkdir -p "$(brew --repository)/Library/Taps/vincent-r-kennedy"
+          ln -s "$GITHUB_WORKSPACE" "$(brew --repository)/Library/Taps/vincent-r-kennedy/homebrew-ruflo"
+
+      - name: Install formula
+        run: |
+          # Pre-built native addon (ripgrep.node) in a transitive dependency has
+          # insufficient Mach-O header padding for Homebrew's dylib ID rewrite.
+          # The install completes and the binary works; only the linkage fixer
+          # returns non-zero, so we allow that and verify the binary below.
+          brew install vincent-r-kennedy/ruflo/ruflo || true
+
+      - name: Verify installation
+        run: |
+          test -x "$(brew --prefix)/bin/ruflo"
+          ruflo --version
+
+      - name: Test formula
+        run: brew test vincent-r-kennedy/ruflo/ruflo
+
+      - name: Audit formula
+        run: brew audit --strict --formula vincent-r-kennedy/ruflo/ruflo
